@@ -1,18 +1,18 @@
 # 🚀 DevOps Monitoring Dashboard — MVP
 
-Mini‑projet DevOps visant à développer un **dashboard de monitoring temps réel**, composé de :
+Ce mini‑projet présente un **dashboard de monitoring temps réel** avec :
 
-- ⚙️ **Backend FastAPI** : exposition des métriques système et gestion des serveurs monitorés  
-- 📊 **Frontend Streamlit** : visualisation en temps réel  
-- 🧪 **Tests automatisés (pytest)** : validation fonctionnelle et couverture  
+- ⚙️ **Backend FastAPI** : collecte et exposition des métriques, gestion des serveurs monitorés
+- 📊 **Frontend Streamlit** : affichage dynamique des données
+- 🧪 **Tests pytest** : couverture et vérification des fonctionnalités
 
 ---
 
 ## 📋 Prérequis
 
-- Python **≥ 3.10** *(testé avec Python 3.13)*
+- Python **≥ 3.10** *(testé sur Python 3.13)*
 - `pip`
-- Environnement virtuel recommandé ✅
+- Environnement virtuel recommandé
 
 ---
 
@@ -21,24 +21,24 @@ Mini‑projet DevOps visant à développer un **dashboard de monitoring temps r�
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Windows : .venv\Scripts\activate
-
 pip install -r requirements.txt
+```
 
 ---
 
-## Configuration
+## 🔧 Configuration
 
-Une clé API est requise pour les opérations d’écriture (POST, DELETE).
+Une clé API est nécessaire pour les opérations d’écriture (`POST`, `DELETE`).
 
 ```bash
 export API_KEY=dev-secret-key
 ```
 
-Une valeur par défaut est définie pour le développement local.
+Un paramètre par défaut est prévu pour le développement local.
 
 ---
 
-## ▶Lancer l’application
+## ▶ Démarrage
 
 ### Backend FastAPI
 
@@ -46,20 +46,13 @@ Une valeur par défaut est définie pour le développement local.
 uvicorn api.main:app --reload --port 8000
 ```
 
-API disponible sur :
+API disponible :
 
 ```bash
 http://localhost:8000
 ```
 
-Si le port 8000 est déjà utilisé, taper la commande suivante pour trouver le processus et le libérer :
-
-```bash
-lsof -i :8000
-kill -9 <PID>
-```
-
-Documentation interactive (Swagger) :
+Documentation interactive :
 
 ```bash
 http://localhost:8000/docs
@@ -73,7 +66,7 @@ Dans un autre terminal :
 streamlit run dashboard/app.py
 ```
 
-Interface disponible sur :
+Interface disponible :
 
 ```bash
 http://localhost:8501
@@ -81,61 +74,48 @@ http://localhost:8501
 
 ---
 
-## Tests & Validation
+## ✅ Tests
 
-### ✅ 1. Tests unitaires et fonctionnels
-
-Lancer l’ensemble des tests :
+### Tests unitaires et fonctionnels
 
 ```bash
 pytest tests/ -v
 ```
 
-Tests couverts :
+Couvre notamment :
 
-- GET /health
-- GET /metrics
-- CRUD /servers
-- sécurité via API key
-- health check manuel /servers/{id}/check
+- `GET /health`
+- `GET /metrics`
+- CRUD des serveurs
+- validation de la clé API
+- vérification de `GET /servers/{id}/check`
 
-### 2. Tests avec couverture de code
+### Couverture de code
 
 ```bash
 pytest --cov=api tests/ -v
 ```
 
-Résultat attendu :
+Objectifs :
 
-✅ Tous les tests passent
-✅ Couverture ≥ 75 % (actuellement ~83 %)
+- tous les tests doivent réussir
+- couverture minimale attendue : **75 %**
 
-Exemple de sortie :
+### Tests manuels (optionnels)
 
-| Module          | Lignes | Couverture |
-|-----------------|--------|------------|
-| api/auth.py     | 9      | 100%       |
-| api/main.py     | 62     | 79%        |
-| api/metrics.py  | 7      | 100%       |
-| api/models.py   | 20     | 100%       |
-| api/poller.py   | 17     | 65%        |
-| **Total**       | 115    | **83%**    |
-
-### ✅ 3. Tests manuels de l’API (optionnel)
-
-#### Health
+#### Vérification du service
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-#### Metrics
+#### Récupération des métriques
 
 ```bash
 curl http://localhost:8000/metrics
 ```
 
-#### Création d’un serveur (clé API requise)
+#### Ajout d’un serveur
 
 ```bash
 curl -X POST http://localhost:8000/servers \
@@ -144,12 +124,11 @@ curl -X POST http://localhost:8000/servers \
   -d '{"name":"local","host":"localhost","port":8000}'
 ```
 
-### 4. Test du WebSocket (preuve fonctionnelle)
+### Test WebSocket
 
-Swagger n’affiche pas toujours les WebSockets.
-La validation se fait via un client Python.
+Le Swagger ne montre pas toujours les WebSockets ; utilisez un client Python pour vérifier.
 
-```shell
+```bash
 pip install websockets
 ```
 
@@ -166,13 +145,11 @@ async def test_ws():
 asyncio.run(test_ws())
 ```
 
-Lancer le test :
-
 ```bash
 python ws_test.py
 ```
 
-Si réception d’un JSON toutes les secondes = WebSocket validé.
+Si vous recevez un JSON chaque seconde, le WebSocket fonctionne correctement.
 
 
 
