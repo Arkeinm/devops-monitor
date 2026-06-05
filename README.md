@@ -98,4 +98,15 @@ make test
 
 Pour toute modification de déploiement (par ex. pousser vers Azure Container Apps ou utiliser un registry privé), dites-moi ce que vous souhaitez et j'adapte la documentation et le workflow.
 
+## Résultats
+
+Les deux sont bien fonctionnels
+
+Dashboard azure
+
+![Dashboard Azure](images/azure_dashboard.png)
+
+Api azure
+
+![API Azure](images/azure_api.png)
 
