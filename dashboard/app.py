@@ -1,197 +1,357 @@
+"""
+Dashboard Streamlit — DevOps Monitoring Dashboard.
+
+Onglets :
+    - Métriques : KPIs temps réel + graphique sur 60 secondes
+    - Serveurs  : tableau coloré + formulaire d'enregistrement
+"""
+import os
 import time
+from collections import deque
 from datetime import datetime
 
-import requests
+import httpx
 import pandas as pd
 import streamlit as st
 
-# =====================
-# Configuration
-# =====================
-API_URL = "http://localhost:8000"
-API_KEY = "dev-secret-key"
-
-REFRESH_METRICS = 2
-REFRESH_SERVERS = 5
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_KEY = os.getenv("API_KEY", "")
+HISTORY_SIZE = 60  # secondes de données conservées
 
 st.set_page_config(
-    page_title="DevOps Monitoring Dashboard",
+    page_title="DevOps Monitor",
     page_icon="📊",
     layout="wide",
 )
 
-# =====================
-# Helpers API
-# =====================
-@st.cache_data(ttl=REFRESH_METRICS)
-def fetch_metrics():
-    return requests.get(f"{API_URL}/metrics", timeout=3).json()
+# ---------------------------------------------------------------------------
+# Helpers HTTP
+# ---------------------------------------------------------------------------
 
 
-@st.cache_data(ttl=REFRESH_SERVERS)
-def fetch_servers():
-    return requests.get(f"{API_URL}/servers", timeout=3).json()
+def get_headers() -> dict:
+    """Retourne les headers avec l'API Key."""
+    return {"X-API-Key": API_KEY}
 
 
-def post_server(payload: dict):
-    return requests.post(
-        f"{API_URL}/servers",
-        headers={"X-API-Key": API_KEY},
-        json=payload,
-        timeout=3,
-    )
+@st.cache_data(ttl=1)
+def fetch_metrics() -> dict | None:
+    """
+    Récupère les métriques depuis l'API.
+
+    Returns:
+        dict ou None en cas d'erreur.
+    """
+    try:
+        r = httpx.get(f"{API_BASE_URL}/metrics", timeout=3)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
 
 
-def check_server(server_id: str):
-    return requests.post(f"{API_URL}/servers/{server_id}/check", timeout=3)
+def fetch_servers() -> list:
+    """
+    Récupère la liste des serveurs depuis l'API.
+
+    Returns:
+        list: Liste des serveurs ou liste vide en cas d'erreur.
+    """
+    try:
+        r = httpx.get(f"{API_BASE_URL}/servers", timeout=3)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return []
 
 
-# =====================
-# Sidebar
-# =====================
-st.sidebar.title("⚙️ Configuration")
-st.sidebar.markdown("Paramètres du dashboard")
+def register_server(name: str, host: str, port: int) -> dict | None:
+    """
+    Enregistre un nouveau serveur via l'API.
 
-auto_refresh = st.sidebar.toggle("🔄 Rafraîchissement auto", value=True)
-max_points = st.sidebar.slider("Historique (points)", 30, 120, 60)
+    Args:
+        name: Nom du serveur.
+        host: Adresse IP ou hostname.
+        port: Port du serveur.
 
-# =====================
-# Tabs
-# =====================
-tab_metrics, tab_servers = st.tabs(["📊 Metrics", "🖥️ Servers"])
+    Returns:
+        dict: Serveur créé ou None en cas d'erreur.
+    """
+    try:
+        r = httpx.post(
+            f"{API_BASE_URL}/servers",
+            json={"name": name, "host": host, "port": port},
+            headers=get_headers(),
+            timeout=5,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        st.error(f"Erreur lors de l'enregistrement : {e}")
+        return None
 
-# =====================
-# TAB 1 — METRICS
-# =====================
+
+def delete_server(server_id: str) -> bool:
+    """
+    Supprime un serveur via l'API.
+
+    Args:
+        server_id: ID du serveur à supprimer.
+
+    Returns:
+        bool: True si supprimé avec succès.
+    """
+    try:
+        r = httpx.delete(
+            f"{API_BASE_URL}/servers/{server_id}",
+            headers=get_headers(),
+            timeout=5,
+        )
+        return r.status_code == 204
+    except Exception:
+        return False
+
+
+def trigger_check(server_id: str) -> dict | None:
+    """
+    Déclenche un health check manuel via l'API.
+
+    Args:
+        server_id: ID du serveur.
+
+    Returns:
+        dict: Serveur avec statut mis à jour ou None.
+    """
+    try:
+        r = httpx.post(
+            f"{API_BASE_URL}/servers/{server_id}/check",
+            headers=get_headers(),
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Initialisation du session_state
+# ---------------------------------------------------------------------------
+
+if "cpu_history" not in st.session_state:
+    st.session_state.cpu_history = deque(maxlen=HISTORY_SIZE)
+if "mem_history" not in st.session_state:
+    st.session_state.mem_history = deque(maxlen=HISTORY_SIZE)
+if "disk_history" not in st.session_state:
+    st.session_state.disk_history = deque(maxlen=HISTORY_SIZE)
+if "time_history" not in st.session_state:
+    st.session_state.time_history = deque(maxlen=HISTORY_SIZE)
+
+# ---------------------------------------------------------------------------
+# Layout principal
+# ---------------------------------------------------------------------------
+
+st.title("📊 DevOps Monitoring Dashboard")
+st.caption(f"API : `{API_BASE_URL}` · Actualisation automatique toutes les secondes")
+
+tab_metrics, tab_servers = st.tabs(["📈 Métriques", "🖥️ Serveurs"])
+
+# ===========================================================================
+# Onglet Métriques
+# ===========================================================================
+
 with tab_metrics:
+    st.subheader("Métriques système en temps réel")
+
     metrics = fetch_metrics()
 
-    # ---- KPIs
-    c1, c2, c3, c4 = st.columns(4)
+    if metrics is None:
+        st.error("⚠️ Impossible de joindre l'API. Vérifiez que le service est démarré.")
+    else:
+        # --- KPIs ---
+        col1, col2, col3 = st.columns(3)
 
-    c1.metric(
-        "CPU (%)",
-        f"{metrics['cpu_percent']} %",
-        delta="⚠️" if metrics["cpu_percent"] > 80 else None,
-    )
+        cpu = metrics.get("cpu_percent", 0)
+        mem = metrics.get("memory_percent", 0)
+        disk = metrics.get("disk_percent", 0)
 
-    c2.metric(
-        "Mémoire (%)",
-        f"{metrics['memory_percent']} %",
-        delta="⚠️" if metrics["memory_percent"] > 85 else None,
-    )
+        col1.metric(
+            label="🖥️ CPU",
+            value=f"{cpu:.1f} %",
+            delta=None,
+            help="Utilisation CPU instantanée",
+        )
+        col2.metric(
+            label="🧠 Mémoire",
+            value=f"{mem:.1f} %",
+            delta=None,
+            help=(
+                f"{metrics.get('memory_used_gb', 0):.1f} GB / "
+                f"{metrics.get('memory_total_gb', 0):.1f} GB"
+            ),
+        )
+        col3.metric(
+            label="💾 Disque",
+            value=f"{disk:.1f} %",
+            delta=None,
+            help=(
+                f"{metrics.get('disk_used_gb', 0):.1f} GB / "
+                f"{metrics.get('disk_total_gb', 0):.1f} GB"
+            ),
+        )
 
-    c3.metric(
-        "Mémoire utilisée",
-        f"{metrics['memory_used_gb']} GB",
-    )
+        # --- Historique ---
+        now = datetime.now().strftime("%H:%M:%S")
+        st.session_state.cpu_history.append(cpu)
+        st.session_state.mem_history.append(mem)
+        st.session_state.disk_history.append(disk)
+        st.session_state.time_history.append(now)
 
-    c4.metric(
-        "Disque (%)",
-        f"{metrics['disk_percent']} %",
-        delta="⚠️" if metrics["disk_percent"] > 90 else None,
-    )
+        # --- Graphique ---
+        if len(st.session_state.cpu_history) > 1:
+            df_chart = pd.DataFrame(
+                {
+                    "CPU %": list(st.session_state.cpu_history),
+                    "Mémoire %": list(st.session_state.mem_history),
+                    "Disque %": list(st.session_state.disk_history),
+                },
+                index=list(st.session_state.time_history),
+            )
+            st.line_chart(df_chart, height=300)
 
-    st.divider()
+        # Détails supplémentaires
+        with st.expander("Détails mémoire & disque"):
+            dcol1, dcol2 = st.columns(2)
+            with dcol1:
+                st.write("**Mémoire**")
+                st.write(
+                    f"- Utilisée : {metrics.get('memory_used_gb', 0):.2f} GB"
+                )
+                st.write(
+                    f"- Totale   : {metrics.get('memory_total_gb', 0):.2f} GB"
+                )
+            with dcol2:
+                st.write("**Disque**")
+                st.write(
+                    f"- Utilisé : {metrics.get('disk_used_gb', 0):.2f} GB"
+                )
+                st.write(
+                    f"- Total   : {metrics.get('disk_total_gb', 0):.2f} GB"
+                )
 
-    # ---- Historique
-    if "metrics_history" not in st.session_state:
-        st.session_state.metrics_history = []
+    # Auto-refresh toutes les secondes
+    time.sleep(1)
+    st.rerun()
 
-    st.session_state.metrics_history.append(
-        {
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "cpu": metrics["cpu_percent"],
-            "memory": metrics["memory_percent"],
-        }
-    )
+# ===========================================================================
+# Onglet Serveurs
+# ===========================================================================
 
-    st.session_state.metrics_history = st.session_state.metrics_history[-max_points:]
-
-    hist_df = pd.DataFrame(st.session_state.metrics_history)
-    hist_df = hist_df.set_index("time")
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.subheader("CPU (%)")
-        st.line_chart(hist_df["cpu"])
-
-    with col_b:
-        st.subheader("Memory (%)")
-        st.line_chart(hist_df["memory"])
-
-    # ---- Auto refresh
-    if auto_refresh:
-        time.sleep(REFRESH_METRICS)
-        st.rerun()
-
-# =====================
-# TAB 2 — SERVERS
-# =====================
 with tab_servers:
-    servers = fetch_servers()
-    df = pd.DataFrame(servers)
+    st.subheader("Serveurs enregistrés")
 
-    st.subheader("📋 Serveurs monitorés")
+    servers_list = fetch_servers()
 
-    if not df.empty:
-        def status_color(val):
-            if val == "UP":
-                return "background-color: #c8f7c5"
-            if val == "DEGRADED":
-                return "background-color: #ffeaa7"
-            if val == "DOWN":
-                return "background-color: #fab1a0"
-            return ""
+    # --- Tableau coloré ---
+    if servers_list:
+        STATUS_COLORS = {
+            "UP": "🟢",
+            "DEGRADED": "🟡",
+            "DOWN": "🔴",
+            "UNKNOWN": "⚪",
+        }
+
+        df_servers = pd.DataFrame(
+            [
+                {
+                    "Statut": STATUS_COLORS.get(s["status"], "⚪")
+                    + " "
+                    + s["status"],
+                    "Nom": s["name"],
+                    "Host": s["host"],
+                    "Port": s["port"],
+                    "URL": s.get("base_url", ""),
+                    "ID": s["id"],
+                }
+                for s in servers_list
+            ]
+        )
 
         st.dataframe(
-            df.style.applymap(status_color, subset=["status"]),
+            df_servers.drop(columns=["ID"]),
             use_container_width=True,
+            hide_index=True,
         )
-    else:
-        st.info("Aucun serveur enregistré.")
 
-    st.divider()
+        # --- Actions sur serveurs ---
+        st.markdown("#### Actions")
+        action_col1, action_col2 = st.columns(2)
 
-    # ---- Actions
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("➕ Ajouter un serveur")
-        with st.form("add_server", clear_on_submit=True):
-            name = st.text_input("Nom")
-            host = st.text_input("Host", value="localhost")
-            port = st.number_input("Port", min_value=1, max_value=65535, value=8000)
-
-            submitted = st.form_submit_button("Ajouter")
-
-            if submitted:
-                resp = post_server(
-                    {"name": name, "host": host, "port": port}
-                )
-                if resp.status_code == 201:
-                    st.success("Serveur ajouté")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error("Erreur lors de l’ajout")
-
-    with col2:
-        st.subheader("🔍 Health check manuel")
-
-        if not df.empty:
-            server_id = st.selectbox(
-                "Serveur",
-                options=df["id"],
-                format_func=lambda x: df[df["id"] == x]["name"].values[0],
+        with action_col1:
+            server_names = {
+                s["name"]: s["id"] for s in servers_list
+            }
+            selected_name = st.selectbox(
+                "Sélectionner un serveur",
+                options=list(server_names.keys()),
+                key="select_server",
             )
 
-            if st.button("Lancer le check"):
-                r = check_server(server_id)
-                if r.status_code == 200:
-                    st.success("Health check déclenché")
-                    st.cache_data.clear()
+        with action_col2:
+            st.write("")
+            st.write("")
+            btn_col1, btn_col2 = st.columns(2)
+            if selected_name:
+                sid = server_names[selected_name]
+                if btn_col1.button("🔍 Health Check"):
+                    result = trigger_check(sid)
+                    if result:
+                        st.success(
+                            f"Statut mis à jour : {result['status']}"
+                        )
+                    else:
+                        st.error("Échec du health check")
+                if btn_col2.button("🗑️ Supprimer"):
+                    if delete_server(sid):
+                        st.success(f"Serveur '{selected_name}' supprimé")
+                        st.rerun()
+                    else:
+                        st.error("Erreur lors de la suppression")
+    else:
+        st.info("Aucun serveur enregistré pour le moment.")
+
+    st.markdown("---")
+
+    # --- Formulaire d'enregistrement ---
+    st.markdown("#### ➕ Enregistrer un nouveau serveur")
+
+    with st.form("register_server_form", clear_on_submit=True):
+        f_col1, f_col2, f_col3 = st.columns([2, 2, 1])
+        with f_col1:
+            f_name = st.text_input(
+                "Nom du serveur", placeholder="prod-api-01"
+            )
+        with f_col2:
+            f_host = st.text_input(
+                "Host / IP", placeholder="192.168.1.100"
+            )
+        with f_col3:
+            f_port = st.number_input(
+                "Port", min_value=1, max_value=65535, value=8000
+            )
+
+        submitted = st.form_submit_button(
+            "Enregistrer", use_container_width=True
+        )
+
+        if submitted:
+            if not f_name or not f_host:
+                st.error("Le nom et l'host sont obligatoires.")
+            else:
+                result = register_server(f_name, f_host, int(f_port))
+                if result:
+                    st.success(
+                        f"✅ Serveur '{result['name']}' enregistré "
+                        f"(ID: {result['id'][:8]}...)"
+                    )
                     st.rerun()
-                else:
-                    st.error("Échec du health check")
